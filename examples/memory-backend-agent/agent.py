@@ -75,9 +75,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python agent.py "Save a note to /notes/ideas.txt with: brainstorm list"
-  python agent.py "List files under /notes/"
-  python agent.py "What did I save in /notes/ideas.txt?"
+  python agent.py
+  python agent.py "Save to /notes/ideas.txt: 1. Learn MemoryBackend 2. Try PowerMem"
+  python agent.py "List files under /notes/ and read /notes/ideas.txt"
+  python agent.py --user alice "Save to /notes/meetup.txt: workshop notes"   # multi-tenant (PowerMem)
         """,
     )
     parser.add_argument(
@@ -87,20 +88,34 @@ Examples:
         default="List any files under / and tell me what's there.",
         help="User message (default: list root and describe)",
     )
+    parser.add_argument(
+        "--user",
+        type=str,
+        default=None,
+        help="User id for multi-tenant isolation (passed to backend configurable)",
+    )
     args = parser.parse_args()
 
     console.print(
         Panel(f"[bold cyan]Message:[/bold cyan] {args.message}", border_style="cyan")
     )
     console.print()
+    console.print(
+        "[dim]Using in-memory store — data is lost when this process exits. "
+        "Use agent_powermem.py for persistence across runs.[/dim]"
+    )
+    console.print()
 
     console.print("[dim]Creating agent (MemoryBackend)...[/dim]")
     agent = create_memory_backend_agent()
 
+    config = {"configurable": {"user_id": args.user}} if args.user else None
+
     console.print("[dim]Invoking...[/dim]\n")
     try:
         result = agent.invoke(
-            {"messages": [{"role": "user", "content": args.message}]}
+            {"messages": [{"role": "user", "content": args.message}]},
+            config=config,
         )
         final = result["messages"][-1]
         answer = final.content if hasattr(final, "content") else str(final)

@@ -36,9 +36,12 @@ def _get_store():
         store = PowerMemPathStore(memory)
         return store, "PowerMem"
     except Exception as e:
+        hint = ""
+        if isinstance(e, ModuleNotFoundError) and e.name == "powermem":
+            hint = " Run: uv pip install powermem"
         console.print(
             "[dim]PowerMem not used (install and configure for persistent storage): "
-            f"{e!r}. Using in-memory store.[/dim]\n"
+            f"{e!r}. Using in-memory store.{hint}[/dim]\n"
         )
         if _fallback_store is None:
             _fallback_store = InMemoryPathStore()
@@ -69,6 +72,12 @@ def create_memory_backend_agent():
 def main():
     parser = argparse.ArgumentParser(
         description="Deep Agent with MemoryBackend (PowerMem or in-memory)",
+        epilog="""
+Examples:
+  python agent_powermem.py "Save to /notes/meetup.txt: today's workshop notes"
+  python agent_powermem.py "List files under /notes/ and read /notes/meetup.txt"
+  python agent_powermem.py --user bob "Save to /notes/ideas.txt: my ideas"   # multi-tenant
+        """,
     )
     parser.add_argument(
         "message",
@@ -76,6 +85,12 @@ def main():
         nargs="?",
         default="List any files under / and tell me what's there.",
         help="User message",
+    )
+    parser.add_argument(
+        "--user",
+        type=str,
+        default=None,
+        help="User id for multi-tenant isolation (PowerMem)",
     )
     args = parser.parse_args()
 
@@ -88,10 +103,13 @@ def main():
     agent, store_name = create_memory_backend_agent()
     console.print(f"[dim]Backend: {store_name}[/dim]\n")
 
+    config = {"configurable": {"user_id": args.user}} if args.user else None
+
     console.print("[dim]Invoking...[/dim]\n")
     try:
         result = agent.invoke(
-            {"messages": [{"role": "user", "content": args.message}]}
+            {"messages": [{"role": "user", "content": args.message}]},
+            config=config,
         )
         final = result["messages"][-1]
         answer = final.content if hasattr(final, "content") else str(final)
