@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Literal, NotRequired, TypeAlias
+from typing import Any, Literal, NotRequired, Protocol, TypeAlias, runtime_checkable
 
 from langchain.tools import ToolRuntime
 from typing_extensions import TypedDict
@@ -161,6 +161,104 @@ class EditResult:
     path: str | None = None
     files_update: dict[str, Any] | None = None
     occurrences: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# Path-keyed memory store protocol (for MemoryBackend)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PathMemoryRecord:
+    """A single path-keyed memory record (one "file" in MemoryBackend)."""
+
+    id: Any
+    """Opaque record id for update/delete."""
+
+    path: str
+    """Normalized absolute path (e.g. /memories/note.txt)."""
+
+    content: str
+    """Raw text content."""
+
+    created_at: str
+    """Creation time, ISO format or empty."""
+
+    modified_at: str
+    """Last modified time, ISO format or empty."""
+
+
+@runtime_checkable
+class PathMemoryStore(Protocol):
+    """Protocol for a path-keyed memory store used by MemoryBackend.
+
+    Implement this to plug in PowerMem, another vector DB, or a custom store.
+    Paths are normalized absolute paths (e.g. /memories/foo.txt). Identity
+    (user_id, agent_id, run_id) is passed for multi-tenant isolation.
+    """
+
+    def get_by_path(
+        self,
+        path: str,
+        *,
+        user_id: Any = None,
+        agent_id: Any = None,
+        run_id: Any = None,
+    ) -> PathMemoryRecord | None:
+        """Return the record at the given path, or None if not found."""
+        ...
+
+    def list_by_prefix(
+        self,
+        prefix: str,
+        *,
+        user_id: Any = None,
+        agent_id: Any = None,
+        run_id: Any = None,
+        limit: int = 2000,
+    ) -> list[PathMemoryRecord]:
+        """Return all records whose path starts with prefix (or equals prefix)."""
+        ...
+
+    def add(
+        self,
+        path: str,
+        content: str,
+        *,
+        user_id: Any = None,
+        agent_id: Any = None,
+        run_id: Any = None,
+    ) -> PathMemoryRecord:
+        """Create a new record at path; path must not already exist."""
+        ...
+
+    def update(
+        self,
+        record_id: Any,
+        content: str,
+        *,
+        user_id: Any = None,
+        agent_id: Any = None,
+        run_id: Any = None,
+    ) -> None:
+        """Update the content of an existing record by id."""
+        ...
+
+    def delete(
+        self,
+        record_id: Any,
+        *,
+        user_id: Any = None,
+        agent_id: Any = None,
+        run_id: Any = None,
+    ) -> None:
+        """Delete the record by id."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# File backend protocol
+# ---------------------------------------------------------------------------
 
 
 # @abstractmethod to avoid breaking subclasses that only implement a subset

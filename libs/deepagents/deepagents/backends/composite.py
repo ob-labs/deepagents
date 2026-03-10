@@ -16,6 +16,9 @@ Examples:
     composite.write("/temp.txt", "ephemeral")
     composite.write("/memories/note.md", "persistent")
     ```
+
+    To use path-keyed memory (e.g. PowerMem) for a route, use MemoryBackend with a PathMemoryStore:
+    ``routes={"/memories/": MemoryBackend(store, runtime)}``.
 """
 
 from collections import defaultdict

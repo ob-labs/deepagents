@@ -20,6 +20,7 @@ updates:
       - "/examples/content-builder-agent"
       - "/examples/deep_research"
       - "/examples/text-to-sql-agent"
+      - "/examples/memory-backend-agent"
     schedule:
       interval: "weekly"
       day: "monday"

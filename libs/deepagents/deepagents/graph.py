@@ -162,8 +162,10 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
         store: Optional store for persistent storage (required if backend uses `StoreBackend`).
         backend: Optional backend for file storage and execution.
 
-            Pass either a `Backend` instance or a callable factory like `lambda rt: StateBackend(rt)`.
-            For execution support, use a backend that implements `SandboxBackendProtocol`.
+            Pass either a `BackendProtocol` instance or a callable factory (e.g.
+            `lambda rt: StateBackend(rt)` or `lambda rt: MemoryBackend(store, rt)` with a
+            PathMemoryStore such as PowerMemPathStore). For execution support, use a
+            backend that implements `SandboxBackendProtocol`.
         interrupt_on: Mapping of tool names to interrupt configs.
 
             Pass to pause agent execution at specified tool calls for human approval or modification.
