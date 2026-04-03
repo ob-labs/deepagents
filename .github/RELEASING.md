@@ -8,8 +8,7 @@ CLI releases are managed via release-please, which:
 
 1. Analyzes conventional commits on the `main` branch
 2. Creates/updates a release PR with changelog and version bump
-3. When merged, creates a draft GitHub release for review
-4. Publishing the draft triggers PyPI publication
+3. When merged, creates a GitHub release and publishes to PyPI
 
 ## How It Works
 
@@ -30,9 +29,11 @@ To release the CLI:
 1. Merge conventional commits to `main` (see [Commit Format](#commit-format))
 2. Wait for release-please to create/update the release PR
 3. Review the generated changelog in the PR
-4. Merge the release PR — this creates a **draft** GitHub release
-5. Review and edit the release notes in the GitHub UI
-6. Click "Publish release" — this triggers PyPI publication
+4. **Verify the SDK pin** — check that `deepagents==` in `libs/cli/pyproject.toml` is up to date. If the latest SDK version has been confirmed compatible, you should bump the pin on `main` and let release-please regenerate the PR before merging. See [Release Failed: CLI SDK Pin Mismatch](#release-failed-cli-sdk-pin-mismatch) for recovery if this is missed.
+5. Merge the release PR — this triggers the build, pre-release checks, PyPI publish, and GitHub release
+
+> [!IMPORTANT]
+> When developing CLI features that depend on new SDK functionality, bump the SDK pin as part of that work — don't defer it to release time. The pin should always reflect the minimum SDK version the CLI actually requires!
 
 ### Version Bumping
 
@@ -100,7 +101,7 @@ The release-please workflow (`.github/workflows/release-please.yml`) detects a C
 
 ### Lockfile Updates
 
-When release-please creates or updates a release PR, the `update-lockfiles` job automatically regenerates `uv.lock` files since release-please updates `pyproject.toml` versions but doesn't regenerate lockfiles. An up-to-date lockfile is necessary for the cli since it depends on the SDK, and `libs/harbor` depends on the CLI.
+When release-please creates or updates a release PR, the `update-lockfiles` job automatically regenerates `uv.lock` files since release-please updates `pyproject.toml` versions but doesn't regenerate lockfiles. An up-to-date lockfile is necessary for the cli since it depends on the SDK, and `libs/evals` depends on the CLI.
 
 ### Release Pipeline
 
@@ -111,9 +112,8 @@ The release workflow (`.github/workflows/release.yml`) runs when a release PR is
 3. **Release Notes** - Extracts changelog or generates from git log
 4. **Test PyPI** - Publishes to test.pypi.org for validation
 5. **Pre-release Checks** - Runs tests against the built package
-6. **Mark Release** - Creates a **draft** GitHub release with the built artifacts
-
-When you publish the draft release, `.github/workflows/release-publish.yml` triggers and publishes to PyPI.
+6. **Publish** - Publishes to PyPI
+7. **Mark Release** - Creates a published GitHub release with the built artifacts
 
 ### Release PR Labels
 
@@ -139,6 +139,72 @@ For hotfixes or exceptional cases, you can trigger a release manually. Use the `
 
 > [!WARNING]
 > Manual releases should be rare. Prefer the standard release-please flow for the CLI. Manual dispatch bypasses the changelog detection in `release-please.yml` and skips the lockfile update job. Only use it for recovery scenarios (e.g., the release workflow failed after the release PR was already merged).
+
+## Alpha / Pre-release Versions
+
+Alpha releases let you publish a test version to PyPI before the GA release. Users must opt in (`pip install deepagents-cli==0.0.35a1` or `--pre`); plain `pip install deepagents-cli` skips pre-releases.
+
+### Why not use release-please for pre-releases?
+
+release-please is SemVer-only internally. Its `prerelease` versioning strategy produces versions like `0.0.35-alpha.1`, which is **not valid [PEP 440](https://peps.python.org/pep-0440/)**. Python/PyPI requires `0.0.35a1` (no hyphen, no dot). The Python file updaters write the SemVer string verbatim and their regexes cannot round-trip PEP 440 versions, so bumping version files on `main` to a PEP 440 pre-release would break subsequent release-please runs.
+
+### How to publish an alpha
+
+Alpha releases use a **throwaway branch** + manual dispatch. This keeps `main`, the release-please manifest, and any pending release PR completely untouched.
+
+1. **Create a branch from `main`:**
+
+   ```bash
+   git checkout main && git pull
+   git checkout -b username/alpha/cli-<VERSION>
+   ```
+
+   Replace the username in the branch name with your GitHub username.
+
+2. **Bump the version** in both files to a [PEP 440 pre-release](https://peps.python.org/pep-0440/#pre-releases) (e.g., `0.0.35a1`):
+
+   - `libs/cli/pyproject.toml` — `version = "0.0.35a1"`
+   - `libs/cli/deepagents_cli/_version.py` — `__version__ = "0.0.35a1"`
+
+3. **Commit and push:**
+
+   ```bash
+   git add libs/cli/pyproject.toml libs/cli/deepagents_cli/_version.py
+   git commit -m "hotfix(cli): alpha release <VERSION>"
+   git push -u origin alpha/cli-<VERSION>
+   ```
+
+4. **Trigger the release workflow:**
+
+   - Go to **Actions** > **Package Release** > **Run workflow**
+   - Branch: `alpha/cli-<VERSION>`
+   - Package: `deepagents-cli`
+   - Enable `dangerous-nonmain-release` ✓
+   - Leave `dangerous-skip-sdk-pin-check` unchecked (unless the SDK pin is intentionally behind)
+
+5. **Clean up** — delete the branch after the workflow succeeds:
+
+   ```bash
+   git checkout main
+   git branch -D alpha/cli-<VERSION>
+   git push origin --delete alpha/cli-<VERSION>
+   ```
+
+### Promoting an alpha to GA
+
+After validating the alpha, merge the pending release PR (e.g., `release(deepagents-cli): 0.0.35`) as normal — release-please handles the GA version, changelog, and tag. No extra steps needed; PyPI treats `0.0.35a1` and `0.0.35` as distinct versions and `pip install deepagents-cli` automatically prefers the GA release.
+
+If no release PR exists yet (e.g., no releasable commits since the last GA), you can force one with a `Release-As` commit footer:
+
+```bash
+git commit --allow-empty -m "feat(cli): release 0.0.35" -m "Release-As: 0.0.35"
+```
+
+### Multiple alpha iterations
+
+Increment the PEP 440 pre-release number on each iteration: `0.0.35a1`, `0.0.35a2`, `0.0.35a3`, etc. Each iteration follows the same branch + manual dispatch flow above.
+
+For beta or release candidate stages, use `b` or `rc`: `0.0.35b1`, `0.0.35rc1`.
 
 ## Troubleshooting
 
@@ -254,9 +320,7 @@ This means the CLI's pinned `deepagents` dependency in `libs/cli/pyproject.toml`
    - Click **Run workflow**
    - Select `main` branch and `deepagents-cli` package
 
-3. **Publish the draft release** once the workflow completes
-
-4. **Fix the `autorelease: pending` label** if the original automated release left it on the merged release PR. The failed workflow skipped the `mark-release` job, so the label was never swapped. See [Release PR Stuck with "autorelease: pending" Label](#release-pr-stuck-with-autorelease-pending-label) for the fix. **If you skip this step, release-please will not create new release PRs.**
+3. **Verify the `autorelease: pending` label was swapped.** The `mark-release` job will attempt to find the release PR by label and update it automatically, even on manual dispatch. If the label wasn't swapped (e.g., the job failed), fix it manually — see [Release PR Stuck with "autorelease: pending" Label](#release-pr-stuck-with-autorelease-pending-label). **If you skip this step, release-please will not create new release PRs.**
 
 ### Re-releasing a Version
 
@@ -264,7 +328,7 @@ PyPI does not allow re-uploading the same version. If a release failed partway:
 
 1. If already on PyPI: bump the version and release again
 2. If only on test PyPI: the workflow uses `skip-existing: true`, so re-running should work
-3. If the GitHub release exists but PyPI publish failed: delete the release/tag and re-run the workflow
+3. If the GitHub release exists but PyPI publish failed (e.g., from a manual re-run): delete the release/tag and re-run the workflow
 
 ### "Untagged, merged release PRs outstanding" Error
 
@@ -315,7 +379,7 @@ gh api -X PATCH repos/langchain-ai/deepagents/releases/$(gh api repos/langchain-
 After fixing, the next push to main should properly create new release PRs.
 
 > [!NOTE]
-> Moving a tag will put the associated GitHub release back into draft state. If the package was already published to PyPI, you can safely re-publish the draft — the publish workflow uses `skip-existing: true`, so it will succeed without re-uploading.
+> If the package was already published to PyPI and you need to re-run the workflow, it uses `skip-existing: true` on test PyPI, so it will succeed without re-uploading.
 
 ## References
 

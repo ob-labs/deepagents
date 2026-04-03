@@ -19,7 +19,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
-version = "0.0.2"
+version = "0.0.3"
 requires-python = ">=3.11,<4.0"
 dependencies = [
     "deepagents>=0.4.3",
@@ -72,6 +72,7 @@ ignore = [
     "ISC001",  # Messes with the formatter
     "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed — too strict for generic wrappers
 ]
+extend-safe-fixes = ["PLR6201"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
