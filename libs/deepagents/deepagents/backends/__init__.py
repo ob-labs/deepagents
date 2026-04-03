@@ -4,7 +4,8 @@ from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.langsmith import LangSmithSandbox
 from deepagents.backends.local_shell import DEFAULT_EXECUTE_TIMEOUT, LocalShellBackend
-from deepagents.backends.protocol import BackendProtocol
+from deepagents.backends.memory import MemoryBackend, PowerMemPathStore
+from deepagents.backends.protocol import BackendProtocol, PathMemoryRecord, PathMemoryStore
 from deepagents.backends.state import StateBackend
 from deepagents.backends.store import (
     BackendContext,
@@ -20,7 +21,11 @@ __all__ = [
     "FilesystemBackend",
     "LangSmithSandbox",
     "LocalShellBackend",
+    "MemoryBackend",
     "NamespaceFactory",
+    "PathMemoryRecord",
+    "PathMemoryStore",
+    "PowerMemPathStore",
     "StateBackend",
     "StoreBackend",
 ]
