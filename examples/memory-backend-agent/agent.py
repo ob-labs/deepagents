@@ -77,8 +77,10 @@ def main():
 Examples:
   python agent.py
   python agent.py "Save to /notes/ideas.txt: 1. Learn MemoryBackend 2. Try PowerMem"
-  python agent.py "List files under /notes/ and read /notes/ideas.txt"
-  python agent.py --user alice "Save to /notes/meetup.txt: workshop notes"   # multi-tenant (PowerMem)
+  # In-memory: each run is a new process with an empty store. List in the SAME run, e.g.:
+  python agent.py "Save to /notes/ideas.txt: hello, then list files under /notes/ and read the file"
+  python agent.py "List files under /notes/ and read /notes/ideas.txt"   # empty if last run exited
+  python agent.py --user alice "Save to /notes/project.txt: tenant-scoped note"   # multi-tenant (PowerMem)
         """,
     )
     parser.add_argument(
@@ -101,8 +103,9 @@ Examples:
     )
     console.print()
     console.print(
-        "[dim]Using in-memory store — data is lost when this process exits. "
-        "Use agent_powermem.py for persistence across runs.[/dim]"
+        "[dim]Using in-memory store — each `python agent.py` starts a [bold]new[/bold] process "
+        "with an [bold]empty[/bold] store. Data from a previous command line run is not visible here. "
+        "Combine save+list in one prompt, use agent_powermem.py, or a Python REPL for multi-step tests.[/dim]"
     )
     console.print()
 

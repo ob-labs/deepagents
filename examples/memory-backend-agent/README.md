@@ -2,8 +2,7 @@
 
 A minimal **deep agent** example using **Deep Agents + MemoryBackend**: path-keyed memory (PathMemoryStore) instead of the local disk, so the agent has memory and can be extended. Add **PowerMem** for persistence and multi-tenancy.
 
-- For the **Workshop** flow and extension ideas, see [WORKSHOP.md](WORKSHOP.md).
-- **Quick-build formula**: deep agent ≈ AGENTS.md (role and path conventions) + MemoryBackend (PowerMem or in-memory) + optional skills/subagents.
+- **Typical layout**: AGENTS.md (role and path conventions) + MemoryBackend (PowerMem or in-memory) + optional tools in `powermem_tools.py`, skills, or subagents.
 
 ## What this demonstrates
 
@@ -12,9 +11,20 @@ A minimal **deep agent** example using **Deep Agents + MemoryBackend**: path-key
   - **PowerMemPathStore** from `deepagents.backends` with a PowerMem `Memory` instance for persistent, multi-tenant storage.
   - Any custom store that implements the `PathMemoryStore` protocol.
 
+### Showing PowerMem’s strengths (design in this example)
+
+| Capability | How it appears to the agent |
+|------------|-----------------------------|
+| **Persistent rows** (e.g. OceanBase / SQLite) | Same paths after a **new** `python agent_powermem.py` run (`MemoryBackend` + `PowerMemPathStore`). |
+| **SQL / ops visibility** | You query `memories` in the DB; `metadata.path` matches the agent’s logical path. |
+| **Semantic recall** | Extra tool **`search_memories`** (see `powermem_tools.py`) calls PowerMem’s `Memory.search` — fuzzy “what did we save about X?” without an exact path. |
+| **Multi-tenant** | Pass `--user` → `configurable.user_id` → same isolation as path-keyed writes. |
+
+`agent.py` stays path-only (in-memory). **`agent_powermem.py`** adds `search_memories` only when PowerMem initializes successfully.
+
 ## Quick start
 
-**Three commands to try "paths as memory"** (Workshop step 1):
+**Three commands to try path-keyed memory:**
 
 ```bash
 python agent.py
@@ -66,11 +76,17 @@ python agent.py "Save to /notes/ideas.txt: 1. Learn MemoryBackend 2. Try PowerMe
 python agent.py "List files under /notes/ and read /notes/ideas.txt"
 
 # Persistent memory (PowerMem): data survives between runs
-python agent_powermem.py "Save to /notes/meetup.txt: my notes"
-python agent_powermem.py "List files under /notes/ and read /notes/meetup.txt"
+python agent_powermem.py "Save to /notes/project.txt: release checklist"
+python agent_powermem.py "List files under /notes/ and read /notes/project.txt"
+
+# Semantic search over stored memories (PowerMem search API)
+python agent_powermem.py "Use search_memories to find anything we saved about the release"
+
+# See tool calls and raw search_memories JSON in the terminal
+python agent_powermem.py -v "What did we save about the release?"
 
 # Multi-tenant (with PowerMem): pass --user so each user's memory is isolated
-python agent_powermem.py --user alice "Save to /notes/meetup.txt: my notes"
+python agent_powermem.py --user alice "Save to /notes/project.txt: my notes"
 python agent_powermem.py --user bob "List files under /notes/"
 ```
 
@@ -145,7 +161,8 @@ If PowerMem is not configured (e.g. missing or invalid `.env`), `agent_powermem.
 ```
 memory-backend-agent/
 ├── agent.py              # Deep Agent with MemoryBackend (in-memory store)
-├── agent_powermem.py     # Optional: same agent with PowerMem (or fallback to in-memory)
+├── agent_powermem.py     # PowerMem + optional search_memories tool (or fallback to in-memory)
+├── powermem_tools.py     # LangChain tools wrapping PowerMem APIs (e.g. semantic search)
 ├── store.py              # InMemoryPathStore for demo (no PowerMem)
 ├── AGENTS.md             # Agent instructions
 ├── README.md
