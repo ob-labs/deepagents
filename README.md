@@ -27,6 +27,7 @@ Deep Agents is an agent harness. An opinionated, ready-to-run agent out of the b
 
 - **Planning** — `write_todos` for task breakdown and progress tracking
 - **Filesystem** — `read_file`, `write_file`, `edit_file`, `ls`, `glob`, `grep` for reading and writing context
+- **Memory backend** — Optional `MemoryBackend` maps the same file tools to path-keyed memory instead of local disk; use `PowerMemPathStore` (PowerMem) for persistent, multi-tenant storage, or any `PathMemoryStore` implementation
 - **Shell access** — `execute` for running commands (with sandboxing)
 - **Sub-agents** — `task` for delegating work with isolated context windows
 - **Smart defaults** — Prompts that teach the model how to use these tools effectively
@@ -71,6 +72,8 @@ agent = create_deep_agent(
 
 MCP is supported via [`langchain-mcp-adapters`](https://github.com/langchain-ai/langchain-mcp-adapters).
 
+For a **memory-backed** agent (virtual paths + PowerMem persistence and semantic search tools), see [`examples/memory-backend-agent/`](examples/memory-backend-agent/).
+
 ## Deep Agents CLI
 
 A pre-built coding agent in your terminal — similar to Claude Code or Cursor — powered by any LLM. One install command and you're up and running.
@@ -103,7 +106,7 @@ See the [CLI documentation](https://docs.langchain.com/oss/python/deepagents/cli
 - **100% open source** — MIT licensed, fully extensible
 - **Provider agnostic** — Works with any Large Language Model that supports tool calling, including both frontier and open models
 - **Built on LangGraph** — Production-ready runtime with streaming, persistence, and checkpointing
-- **Batteries included** — Planning, file access, sub-agents, and context management work out of the box
+- **Batteries included** — Planning, file access, sub-agents, and context management work out of the box; plug in a memory backend (e.g. PowerMem) when you need path-keyed storage off local disk
 - **Get started in seconds** — `uv add deepagents` and you have a working agent
 - **Customize in minutes** — Add tools, swap models, tune prompts when you need to
 
