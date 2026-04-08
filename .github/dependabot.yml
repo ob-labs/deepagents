@@ -30,6 +30,7 @@ updates:
       - "/examples/deep_research"
       - "/examples/nvidia_deep_agent"
       - "/examples/text-to-sql-agent"
+      - "/examples/memory-backend-agent"
     schedule:
       interval: "monthly"
     groups:

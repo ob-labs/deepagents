@@ -1,0 +1,530 @@
+"""MemoryBackend: Backend that maps file paths to path-keyed memory records.
+
+Uses the PathMemoryStore protocol so any implementation (PowerMem or others) can
+be plugged in. Each store record is one "file" with path as the key. This backend
+implements BackendProtocol (ls/read/write/edit/glob/grep + upload/download) and
+can be used in CompositeBackend routes (e.g. routes={"/memories/": MemoryBackend(store, runtime)}).
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+from typing_extensions import override
+
+from deepagents.backends.protocol import (
+    BackendProtocol,
+    EditResult,
+    FileData,
+    FileDownloadResponse,
+    FileInfo,
+    FileUploadResponse,
+    GrepResult,
+    PathMemoryRecord,
+    PathMemoryStore,
+    ReadResult,
+    WriteResult,
+)
+from deepagents.backends.utils import (
+    _filter_files_by_path,
+    _get_file_type,
+    _glob_search_files,
+    _normalize_path,
+    create_file_data,
+    grep_matches_from_files,
+    perform_string_replacement,
+    slice_read_response,
+)
+
+if TYPE_CHECKING:
+    from langchain.tools import ToolRuntime
+
+logger = logging.getLogger(__name__)
+
+
+def _records_to_files_dict(records: list[PathMemoryRecord]) -> dict[str, dict[str, Any]]:
+    """Convert PathMemoryRecord list to path -> FileData dict for utils."""
+    return {
+        r.path: {
+            "content": r.content.split("\n") if r.content else [""],
+            "created_at": r.created_at,
+            "modified_at": r.modified_at,
+        }
+        for r in records
+    }
+
+
+class MemoryBackend(BackendProtocol):
+    """Backend that stores "files" as path-keyed records via PathMemoryStore.
+
+    Implements BackendProtocol so one store record corresponds to one path.
+    Pass any PathMemoryStore implementation (e.g. PowerMemPathStore for PowerMem)
+    to support different memory products without binding to one vendor.
+    """
+
+    def __init__(self, store: PathMemoryStore, runtime: ToolRuntime) -> None:
+        """Initialize MemoryBackend.
+
+        Args:
+            store: A PathMemoryStore implementation (e.g. PowerMemPathStore).
+            runtime: ToolRuntime for config (user_id, agent_id, run_id from configurable).
+        """
+        self._store = store
+        self.runtime = runtime
+
+    def _get_identity(self) -> tuple[Any, Any, Any]:
+        """Get (user_id, agent_id, run_id) from runtime config."""
+        config = getattr(self.runtime, "config", None) or {}
+        if not isinstance(config, dict):
+            return None, None, None
+        configurable = config.get("configurable", {})
+        if not isinstance(configurable, dict):
+            return None, None, None
+        user_id = configurable.get("user_id") or configurable.get("thread_id")
+        agent_id = configurable.get("agent_id")
+        run_id = configurable.get("run_id")
+        return user_id, agent_id, run_id
+
+    def _get_record_by_path(self, file_path: str) -> PathMemoryRecord | None:
+        """Return the record at path, or None."""
+        try:
+            norm = _normalize_path(file_path)
+        except ValueError:
+            return None
+        user_id, agent_id, run_id = self._get_identity()
+        return self._store.get_by_path(norm, user_id=user_id, agent_id=agent_id, run_id=run_id)
+
+    def _files_under_path(self, path: str) -> dict[str, dict[str, Any]]:
+        """Return path -> FileData for all records under the given path (dir or exact)."""
+        user_id, agent_id, run_id = self._get_identity()
+        try:
+            normalized = _normalize_path(path)
+        except ValueError:
+            return {}
+        records = self._store.list_by_prefix(
+            normalized,
+            user_id=user_id,
+            agent_id=agent_id,
+            run_id=run_id,
+        )
+        files = _records_to_files_dict(records)
+        return _filter_files_by_path(files, normalized)
+
+    def ls_info(self, path: str) -> list[FileInfo]:
+        """List files and directories under path (non-recursive)."""
+        infos: list[FileInfo] = []
+        subdirs: set[str] = set()
+        dir_prefix = path if path.endswith("/") else path + "/"
+        if dir_prefix == "//":
+            dir_prefix = "/"
+
+        files = self._files_under_path(path)
+        for file_path, fd in files.items():
+            if not file_path.startswith(dir_prefix) and file_path != _normalize_path(path):
+                continue
+            rel = file_path.removeprefix(dir_prefix).removeprefix("/")
+            if "/" in rel:
+                subdir_name = rel.split("/")[0]
+                subdirs.add(dir_prefix + subdir_name + "/")
+                continue
+            if rel:
+                size = len("\n".join(fd.get("content", [])))
+                infos.append(
+                    {
+                        "path": file_path,
+                        "is_dir": False,
+                        "size": int(size),
+                        "modified_at": fd.get("modified_at", ""),
+                    }
+                )
+
+        infos.extend(FileInfo(path=subdir, is_dir=True, size=0, modified_at="") for subdir in sorted(subdirs))
+        infos.sort(key=lambda x: x.get("path", ""))
+        return infos
+
+    @override
+    def read(
+        self,
+        file_path: str,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> ReadResult:
+        """Read file content for the requested line range (path = one store record)."""
+        record = self._get_record_by_path(file_path)
+        if record is None:
+            return ReadResult(error=f"File '{file_path}' not found")
+
+        file_data = create_file_data(record.content)
+        file_data["created_at"] = record.created_at
+        file_data["modified_at"] = record.modified_at
+
+        if _get_file_type(file_path) != "text":
+            return ReadResult(file_data=file_data)
+
+        sliced = slice_read_response(file_data, offset, limit)
+        if isinstance(sliced, ReadResult):
+            return sliced
+        sliced_fd = FileData(
+            content=sliced,
+            encoding=file_data.get("encoding", "utf-8"),
+        )
+        if "created_at" in file_data:
+            sliced_fd["created_at"] = file_data["created_at"]
+        if "modified_at" in file_data:
+            sliced_fd["modified_at"] = file_data["modified_at"]
+        return ReadResult(file_data=sliced_fd)
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        """Create a new "file" at path; error if path already exists."""
+        try:
+            norm = _normalize_path(file_path)
+        except ValueError as e:
+            return WriteResult(error=str(e))
+        if self._get_record_by_path(norm) is not None:
+            return WriteResult(error=f"Cannot write to {norm} because it already exists. Read and then make an edit, or write to a new path.")
+        user_id, agent_id, run_id = self._get_identity()
+        try:
+            self._store.add(
+                norm,
+                content,
+                user_id=user_id,
+                agent_id=agent_id,
+                run_id=run_id,
+            )
+        except Exception as e:
+            logger.exception("MemoryBackend.write add failed")
+            return WriteResult(error=str(e))
+        return WriteResult(path=norm, files_update=None)
+
+    @override
+    def edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> EditResult:
+        """Edit existing record by path (string replace)."""
+        record = self._get_record_by_path(file_path)
+        if record is None:
+            return EditResult(error=f"Error: File '{file_path}' not found")
+        result = perform_string_replacement(record.content, old_string, new_string, replace_all)
+        if isinstance(result, str):
+            return EditResult(error=result)
+        new_content, occurrences = result
+        user_id, agent_id, run_id = self._get_identity()
+        try:
+            self._store.update(
+                record.id,
+                new_content,
+                user_id=user_id,
+                agent_id=agent_id,
+                run_id=run_id,
+            )
+        except Exception as e:
+            logger.exception("MemoryBackend.edit update failed")
+            return EditResult(error=str(e))
+        return EditResult(path=file_path, files_update=None, occurrences=occurrences)
+
+    def grep(
+        self,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+    ) -> GrepResult:
+        """Literal text search in store contents under path."""
+        base = path if path is not None else "/"
+        files = self._files_under_path(base)
+        return grep_matches_from_files(files, pattern, base, glob)
+
+    def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
+        """Return FileInfo for records whose path matches the glob pattern."""
+        files = self._files_under_path(path)
+        result = _glob_search_files(files, pattern, path)
+        if result == "No files found":
+            return []
+        paths = result.split("\n")
+        infos: list[FileInfo] = []
+        for p in paths:
+            fd = files.get(p)
+            if not fd:
+                continue
+            size = len("\n".join(fd.get("content", [])))
+            infos.append(
+                {
+                    "path": p,
+                    "is_dir": False,
+                    "size": int(size),
+                    "modified_at": fd.get("modified_at", ""),
+                }
+            )
+        return infos
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        """Upload paths as records (overwrite if path exists)."""
+        user_id, agent_id, run_id = self._get_identity()
+        responses: list[FileUploadResponse] = []
+        for p, raw in files:
+            try:
+                path_norm = _normalize_path(p)
+                content = raw.decode("utf-8", errors="replace")
+                existing = self._get_record_by_path(path_norm)
+                if existing:
+                    self._store.update(
+                        existing.id,
+                        content,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        run_id=run_id,
+                    )
+                else:
+                    self._store.add(
+                        path_norm,
+                        content,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        run_id=run_id,
+                    )
+                responses.append(FileUploadResponse(path=p, error=None))
+            except Exception:
+                logger.exception("MemoryBackend.upload_files failed for %s", p)
+                responses.append(FileUploadResponse(path=p, error="permission_denied"))
+        return responses
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        """Download store contents by path."""
+        responses: list[FileDownloadResponse] = []
+        for p in paths:
+            record = self._get_record_by_path(p)
+            if record is None:
+                responses.append(FileDownloadResponse(path=p, content=None, error="file_not_found"))
+                continue
+            responses.append(FileDownloadResponse(path=p, content=record.content.encode("utf-8"), error=None))
+        return responses
+
+
+# ---------------------------------------------------------------------------
+# PowerMem implementation of PathMemoryStore (optional dependency)
+# ---------------------------------------------------------------------------
+
+PATH_METADATA_KEY = "path"
+"""Metadata key for path in PowerMem records (used by PowerMemPathStore)."""
+
+_MEMORY_LIST_LIMIT = 2000
+
+
+def _power_get_all_items(result: object) -> list[dict[str, Any]]:
+    """Normalize PowerMem get_all return value to a list of row dicts."""
+    rows: list[dict[str, Any]] = []
+    if isinstance(result, dict):
+        inner = cast("dict[str, Any]", result).get("results")
+        if isinstance(inner, list):
+            rows.extend(cast("dict[str, Any]", x) for x in inner if isinstance(x, dict))
+    elif isinstance(result, list):
+        rows.extend(cast("dict[str, Any]", x) for x in result if isinstance(x, dict))
+    return rows
+
+
+class _PowerMemMemoryLike(Protocol):
+    """Structural type for PowerMem (or compatible) Memory passed to PowerMemPathStore."""
+
+    def get_all(
+        self,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
+        limit: int = 2000,
+        offset: int = 0,
+    ) -> object:
+        """Return raw list or dict with results from the backing store."""
+        ...
+
+    def add(
+        self,
+        content: str,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
+        metadata: dict[str, str],
+        infer: bool = False,
+    ) -> dict[str, object] | None:
+        """Add a memory entry; returns wrapper dict or None."""
+        ...
+
+    def update(
+        self,
+        record_id: object,
+        content: str,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+    ) -> None:
+        """Update entry content by id."""
+        ...
+
+    def delete(
+        self,
+        record_id: object,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+    ) -> None:
+        """Delete entry by id."""
+        ...
+
+
+class PowerMemPathStore:
+    """PathMemoryStore implementation using PowerMem Memory.
+
+    Use this to plug PowerMem into MemoryBackend. Requires a powermem.Memory
+    instance (or compatible add/get/update/delete/get_all API).
+    """
+
+    def __init__(self, memory: _PowerMemMemoryLike) -> None:
+        """Initialize with a PowerMem Memory instance.
+
+        Args:
+            memory: powermem.Memory (or compatible) with add, get, update,
+                delete, get_all. Path is stored in metadata[path].
+        """
+        self._memory = memory
+
+    def get_by_path(
+        self,
+        path: str,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
+    ) -> PathMemoryRecord | None:
+        """Return the record at path, or None."""
+        for r in self.list_by_prefix(path, user_id=user_id, agent_id=agent_id, run_id=run_id):
+            if r.path == path:
+                return r
+        return None
+
+    def list_by_prefix(
+        self,
+        prefix: str,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
+        limit: int = _MEMORY_LIST_LIMIT,
+    ) -> list[PathMemoryRecord]:
+        """Return all records whose path starts with prefix or equals prefix."""
+        result = self._memory.get_all(
+            user_id=user_id,
+            agent_id=agent_id,
+            run_id=run_id,
+            limit=limit,
+            offset=0,
+        )
+        items = _power_get_all_items(result)
+        norm_prefix = prefix.rstrip("/") + "/" if prefix != "/" else "/"
+        records: list[PathMemoryRecord] = []
+        for m in items:
+            meta_raw = m.get("metadata")
+            meta: dict[str, Any] = meta_raw if isinstance(meta_raw, dict) else {}
+            p = meta.get(PATH_METADATA_KEY)
+            if not p or not isinstance(p, str) or not p.startswith("/"):
+                continue
+            if prefix != "/" and not (p == prefix or p.startswith(norm_prefix)):
+                continue
+            content_raw = m.get("memory") or m.get("content") or ""
+            content = "\n".join(str(line) for line in content_raw) if isinstance(content_raw, list) else str(content_raw)
+            created_raw = m.get("created_at", "")
+            if hasattr(created_raw, "isoformat"):
+                created_raw = created_raw.isoformat()
+            updated_raw = m.get("updated_at", "")
+            if hasattr(updated_raw, "isoformat"):
+                updated_raw = updated_raw.isoformat()
+            records.append(
+                PathMemoryRecord(
+                    id=m["id"],
+                    path=p,
+                    content=content,
+                    created_at=str(created_raw),
+                    modified_at=str(updated_raw),
+                )
+            )
+        return records
+
+    def add(
+        self,
+        path: str,
+        content: str,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
+    ) -> PathMemoryRecord:
+        """Create a new record at path."""
+        agent_id = agent_id or getattr(self._memory, "agent_id", None)
+        metadata = {PATH_METADATA_KEY: path}
+        out = self._memory.add(
+            content,
+            user_id=user_id,
+            agent_id=agent_id,
+            run_id=run_id,
+            metadata=metadata,
+            infer=False,
+        )
+        add_no_result = "PowerMem add returned no result"
+        if not out:
+            raise RuntimeError(add_no_result)
+        results_val = out.get("results")
+        if not isinstance(results_val, list) or not results_val:
+            raise RuntimeError(add_no_result)
+        res0 = results_val[0]
+        if not isinstance(res0, dict):
+            msg = "PowerMem add returned a non-dict result row"
+            raise TypeError(msg)
+        res = cast("dict[str, Any]", res0)
+        mid = res.get("id")
+        created_raw = res.get("created_at", "")
+        if hasattr(created_raw, "isoformat"):
+            created_raw = created_raw.isoformat()
+        created = str(created_raw)
+        return PathMemoryRecord(
+            id=mid,
+            path=path,
+            content=content,
+            created_at=created,
+            modified_at=created,
+        )
+
+    def update(
+        self,
+        record_id: object,
+        content: str,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,  # noqa: ARG002
+    ) -> None:
+        """Update record content by id."""
+        self._memory.update(
+            record_id,
+            content,
+            user_id=user_id,
+            agent_id=agent_id,
+        )
+
+    def delete(
+        self,
+        record_id: object,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,  # noqa: ARG002
+    ) -> None:
+        """Delete record by id."""
+        self._memory.delete(
+            record_id,
+            user_id=user_id,
+            agent_id=agent_id,
+        )

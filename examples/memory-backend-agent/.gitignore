@@ -1,0 +1,46 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# PowerMem / local data & logs
+data/
+logs/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Tooling
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.python-version
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
