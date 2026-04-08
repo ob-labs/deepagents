@@ -190,7 +190,7 @@ class MemoryBackend(BackendProtocol):
         file_path: str,
         old_string: str,
         new_string: str,
-        replace_all: bool = False,  # noqa: FBT001, FBT002
+        replace_all: bool = False,
     ) -> EditResult:
         """Edit existing record by path (string replace)."""
         record = self._get_record_by_path(file_path)
