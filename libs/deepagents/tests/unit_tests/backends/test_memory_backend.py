@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
 from langchain.tools import ToolRuntime
 from langgraph.store.memory import InMemoryStore
 
 from deepagents.backends.memory import MemoryBackend
-from deepagents.backends.protocol import PathMemoryRecord, PathMemoryStore
+from deepagents.backends.protocol import EditResult, PathMemoryRecord, PathMemoryStore, WriteResult
 
 
 class InMemoryPathStore(PathMemoryStore):
@@ -43,7 +42,7 @@ class InMemoryPathStore(PathMemoryStore):
         norm = prefix.rstrip("/") + "/" if prefix != "/" else "/"
         out = []
         for p, r in self._records.items():
-            if prefix == "/" or p == prefix or p.startswith(norm):
+            if prefix in ("/", p) or p.startswith(norm):
                 out.append(r)
         return out[:limit]
 
@@ -57,7 +56,8 @@ class InMemoryPathStore(PathMemoryStore):
         run_id: object = None,
     ) -> PathMemoryRecord:
         if path in self._records:
-            raise ValueError(f"path already exists: {path}")
+            msg = f"path already exists: {path}"
+            raise ValueError(msg)
         rec = PathMemoryRecord(
             id=self._id(),
             path=path,
@@ -116,8 +116,6 @@ def make_runtime():
 
 
 def test_memory_backend_write_read_edit_ls_grep_glob():
-    from deepagents.backends.protocol import EditResult, WriteResult
-
     store: PathMemoryStore = InMemoryPathStore()
     rt = make_runtime()
     be = MemoryBackend(store, rt)
@@ -153,8 +151,6 @@ def test_memory_backend_write_read_edit_ls_grep_glob():
 
 
 def test_memory_backend_errors():
-    from deepagents.backends.protocol import EditResult, WriteResult
-
     store: PathMemoryStore = InMemoryPathStore()
     rt = make_runtime()
     be = MemoryBackend(store, rt)

@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import override
+
 from deepagents.backends.protocol import (
     BackendProtocol,
     EditResult,
@@ -120,9 +122,7 @@ class MemoryBackend(BackendProtocol):
         for file_path, fd in files.items():
             if not file_path.startswith(dir_prefix) and file_path != _normalize_path(path):
                 continue
-            rel = file_path[len(dir_prefix):] if file_path.startswith(dir_prefix) else file_path
-            if rel.startswith("/"):
-                rel = rel[1:]
+            rel = file_path.removeprefix(dir_prefix).removeprefix("/")
             if "/" in rel:
                 subdir_name = rel.split("/")[0]
                 subdirs.add(dir_prefix + subdir_name + "/")
@@ -138,8 +138,10 @@ class MemoryBackend(BackendProtocol):
                     }
                 )
 
-        for subdir in sorted(subdirs):
-            infos.append(FileInfo(path=subdir, is_dir=True, size=0, modified_at=""))
+        infos.extend(
+            FileInfo(path=subdir, is_dir=True, size=0, modified_at="")
+            for subdir in sorted(subdirs)
+        )
         infos.sort(key=lambda x: x.get("path", ""))
         return infos
 
@@ -182,12 +184,13 @@ class MemoryBackend(BackendProtocol):
             return WriteResult(error=str(e))
         return WriteResult(path=norm, files_update=None)
 
+    @override
     def edit(
         self,
         file_path: str,
         old_string: str,
         new_string: str,
-        replace_all: bool = False,
+        replace_all: bool = False,  # noqa: FBT001, FBT002
     ) -> EditResult:
         """Edit existing record by path (string replace)."""
         record = self._get_record_by_path(file_path)
@@ -273,7 +276,7 @@ class MemoryBackend(BackendProtocol):
                         run_id=run_id,
                     )
                 responses.append(FileUploadResponse(path=p, error=None))
-            except Exception as e:
+            except Exception:
                 logger.exception("MemoryBackend.upload_files failed for %s", p)
                 responses.append(FileUploadResponse(path=p, error="permission_denied"))
         return responses
@@ -309,7 +312,7 @@ class PowerMemPathStore:
     instance (or compatible add/get/update/delete/get_all API).
     """
 
-    def __init__(self, memory: Any) -> None:
+    def __init__(self, memory: object) -> None:
         """Initialize with a PowerMem Memory instance.
 
         Args:
@@ -322,9 +325,9 @@ class PowerMemPathStore:
         self,
         path: str,
         *,
-        user_id: Any = None,
-        agent_id: Any = None,
-        run_id: Any = None,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
     ) -> PathMemoryRecord | None:
         """Return the record at path, or None."""
         for r in self.list_by_prefix(
@@ -338,9 +341,9 @@ class PowerMemPathStore:
         self,
         prefix: str,
         *,
-        user_id: Any = None,
-        agent_id: Any = None,
-        run_id: Any = None,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
         limit: int = _MEMORY_LIST_LIMIT,
     ) -> list[PathMemoryRecord]:
         """Return all records whose path starts with prefix or equals prefix."""
@@ -351,10 +354,13 @@ class PowerMemPathStore:
             limit=limit,
             offset=0,
         )
-        if isinstance(result, dict):
-            items = result.get("results", [])
-        else:
-            items = result if isinstance(result, list) else []
+        items = (
+            result.get("results", [])
+            if isinstance(result, dict)
+            else result
+            if isinstance(result, list)
+            else []
+        )
         norm_prefix = prefix.rstrip("/") + "/" if prefix != "/" else "/"
         records: list[PathMemoryRecord] = []
         for m in items:
@@ -389,9 +395,9 @@ class PowerMemPathStore:
         path: str,
         content: str,
         *,
-        user_id: Any = None,
-        agent_id: Any = None,
-        run_id: Any = None,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
     ) -> PathMemoryRecord:
         """Create a new record at path."""
         agent_id = agent_id or getattr(self._memory, "agent_id", None)
@@ -405,7 +411,8 @@ class PowerMemPathStore:
             infer=False,
         )
         if not out or not out.get("results"):
-            raise RuntimeError("PowerMem add returned no result")
+            msg = "PowerMem add returned no result"
+            raise RuntimeError(msg)
         res = out["results"][0]
         mid = res.get("id")
         created = res.get("created_at", "")
@@ -421,12 +428,12 @@ class PowerMemPathStore:
 
     def update(
         self,
-        record_id: Any,
+        record_id: object,
         content: str,
         *,
-        user_id: Any = None,
-        agent_id: Any = None,
-        run_id: Any = None,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,  # noqa: ARG002
     ) -> None:
         """Update record content by id."""
         self._memory.update(
@@ -438,11 +445,11 @@ class PowerMemPathStore:
 
     def delete(
         self,
-        record_id: Any,
+        record_id: object,
         *,
-        user_id: Any = None,
-        agent_id: Any = None,
-        run_id: Any = None,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,  # noqa: ARG002
     ) -> None:
         """Delete record by id."""
         self._memory.delete(

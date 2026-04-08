@@ -335,9 +335,9 @@ class PathMemoryStore(Protocol):
         self,
         path: str,
         *,
-        user_id: Any = None,
-        agent_id: Any = None,
-        run_id: Any = None,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
     ) -> PathMemoryRecord | None:
         """Return the record at the given path, or None if not found."""
         ...
@@ -346,9 +346,9 @@ class PathMemoryStore(Protocol):
         self,
         prefix: str,
         *,
-        user_id: Any = None,
-        agent_id: Any = None,
-        run_id: Any = None,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
         limit: int = 2000,
     ) -> list[PathMemoryRecord]:
         """Return all records whose path starts with prefix (or equals prefix)."""
@@ -359,32 +359,32 @@ class PathMemoryStore(Protocol):
         path: str,
         content: str,
         *,
-        user_id: Any = None,
-        agent_id: Any = None,
-        run_id: Any = None,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
     ) -> PathMemoryRecord:
         """Create a new record at path; path must not already exist."""
         ...
 
     def update(
         self,
-        record_id: Any,
+        record_id: object,
         content: str,
         *,
-        user_id: Any = None,
-        agent_id: Any = None,
-        run_id: Any = None,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
     ) -> None:
         """Update the content of an existing record by id."""
         ...
 
     def delete(
         self,
-        record_id: Any,
+        record_id: object,
         *,
-        user_id: Any = None,
-        agent_id: Any = None,
-        run_id: Any = None,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
     ) -> None:
         """Delete the record by id."""
         ...
