@@ -17,7 +17,7 @@ from deepagents.backends.protocol import (
     FileDownloadResponse,
     FileInfo,
     FileUploadResponse,
-    GrepMatch,
+    GrepResult,
     PathMemoryRecord,
     PathMemoryStore,
     WriteResult,
@@ -213,12 +213,12 @@ class MemoryBackend(BackendProtocol):
             return EditResult(error=str(e))
         return EditResult(path=file_path, files_update=None, occurrences=occurrences)
 
-    def grep_raw(
+    def grep(
         self,
         pattern: str,
         path: str | None = None,
         glob: str | None = None,
-    ) -> list[GrepMatch] | str:
+    ) -> GrepResult:
         """Literal text search in store contents under path."""
         base = path if path is not None else "/"
         files = self._files_under_path(base)
