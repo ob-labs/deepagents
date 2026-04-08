@@ -90,9 +90,7 @@ class MemoryBackend(BackendProtocol):
         except ValueError:
             return None
         user_id, agent_id, run_id = self._get_identity()
-        return self._store.get_by_path(
-            norm, user_id=user_id, agent_id=agent_id, run_id=run_id
-        )
+        return self._store.get_by_path(norm, user_id=user_id, agent_id=agent_id, run_id=run_id)
 
     def _files_under_path(self, path: str) -> dict[str, dict[str, Any]]:
         """Return path -> FileData for all records under the given path (dir or exact)."""
@@ -138,10 +136,7 @@ class MemoryBackend(BackendProtocol):
                     }
                 )
 
-        infos.extend(
-            FileInfo(path=subdir, is_dir=True, size=0, modified_at="")
-            for subdir in sorted(subdirs)
-        )
+        infos.extend(FileInfo(path=subdir, is_dir=True, size=0, modified_at="") for subdir in sorted(subdirs))
         infos.sort(key=lambda x: x.get("path", ""))
         return infos
 
@@ -167,9 +162,7 @@ class MemoryBackend(BackendProtocol):
         except ValueError as e:
             return WriteResult(error=str(e))
         if self._get_record_by_path(norm) is not None:
-            return WriteResult(
-                error=f"Cannot write to {norm} because it already exists. Read and then make an edit, or write to a new path."
-            )
+            return WriteResult(error=f"Cannot write to {norm} because it already exists. Read and then make an edit, or write to a new path.")
         user_id, agent_id, run_id = self._get_identity()
         try:
             self._store.add(
@@ -196,9 +189,7 @@ class MemoryBackend(BackendProtocol):
         record = self._get_record_by_path(file_path)
         if record is None:
             return EditResult(error=f"Error: File '{file_path}' not found")
-        result = perform_string_replacement(
-            record.content, old_string, new_string, replace_all
-        )
+        result = perform_string_replacement(record.content, old_string, new_string, replace_all)
         if isinstance(result, str):
             return EditResult(error=result)
         new_content, occurrences = result
@@ -289,9 +280,7 @@ class MemoryBackend(BackendProtocol):
             if record is None:
                 responses.append(FileDownloadResponse(path=p, content=None, error="file_not_found"))
                 continue
-            responses.append(
-                FileDownloadResponse(path=p, content=record.content.encode("utf-8"), error=None)
-            )
+            responses.append(FileDownloadResponse(path=p, content=record.content.encode("utf-8"), error=None))
         return responses
 
 
@@ -330,9 +319,7 @@ class PowerMemPathStore:
         run_id: object = None,
     ) -> PathMemoryRecord | None:
         """Return the record at path, or None."""
-        for r in self.list_by_prefix(
-            path, user_id=user_id, agent_id=agent_id, run_id=run_id
-        ):
+        for r in self.list_by_prefix(path, user_id=user_id, agent_id=agent_id, run_id=run_id):
             if r.path == path:
                 return r
         return None
@@ -354,13 +341,7 @@ class PowerMemPathStore:
             limit=limit,
             offset=0,
         )
-        items = (
-            result.get("results", [])
-            if isinstance(result, dict)
-            else result
-            if isinstance(result, list)
-            else []
-        )
+        items = result.get("results", []) if isinstance(result, dict) else result if isinstance(result, list) else []
         norm_prefix = prefix.rstrip("/") + "/" if prefix != "/" else "/"
         records: list[PathMemoryRecord] = []
         for m in items:
