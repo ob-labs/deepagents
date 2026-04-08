@@ -6,7 +6,7 @@ from langchain.tools import ToolRuntime
 from langgraph.store.memory import InMemoryStore
 
 from deepagents.backends.memory import MemoryBackend
-from deepagents.backends.protocol import EditResult, PathMemoryRecord, PathMemoryStore, WriteResult
+from deepagents.backends.protocol import EditResult, PathMemoryRecord, PathMemoryStore, ReadResult, WriteResult
 
 
 class InMemoryPathStore(PathMemoryStore):
@@ -126,16 +126,18 @@ def test_memory_backend_write_read_edit_ls_grep_glob():
     assert res.error is None and res.path == "/notes.txt"
 
     # read
-    content = be.read("/notes.txt")
-    assert "hello world" in content
+    read_result = be.read("/notes.txt")
+    assert isinstance(read_result, ReadResult) and read_result.file_data is not None
+    assert "hello world" in read_result.file_data["content"]
 
     # edit
     res2 = be.edit("/notes.txt", "hello", "hi", replace_all=False)
     assert isinstance(res2, EditResult)
     assert res2.error is None and res2.occurrences == 1
 
-    content2 = be.read("/notes.txt")
-    assert "hi world" in content2
+    read2 = be.read("/notes.txt")
+    assert isinstance(read2, ReadResult) and read2.file_data is not None
+    assert "hi world" in read2.file_data["content"]
 
     # ls_info
     listing = be.ls_info("/")
@@ -174,7 +176,9 @@ def test_memory_backend_upload_download():
     # upload
     responses = be.upload_files([("/up.txt", b"uploaded content")])
     assert len(responses) == 1 and responses[0].error is None
-    assert "uploaded content" in be.read("/up.txt")
+    up_read = be.read("/up.txt")
+    assert isinstance(up_read, ReadResult) and up_read.file_data is not None
+    assert "uploaded content" in up_read.file_data["content"]
 
     # download
     downloads = be.download_files(["/up.txt"])

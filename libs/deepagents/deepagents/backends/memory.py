@@ -9,29 +9,32 @@ can be used in CompositeBackend routes (e.g. routes={"/memories/": MemoryBackend
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from typing_extensions import override
 
 from deepagents.backends.protocol import (
     BackendProtocol,
     EditResult,
+    FileData,
     FileDownloadResponse,
     FileInfo,
     FileUploadResponse,
     GrepResult,
     PathMemoryRecord,
     PathMemoryStore,
+    ReadResult,
     WriteResult,
 )
 from deepagents.backends.utils import (
     _filter_files_by_path,
+    _get_file_type,
     _glob_search_files,
     _normalize_path,
     create_file_data,
-    format_read_response,
     grep_matches_from_files,
     perform_string_replacement,
+    slice_read_response,
 )
 
 if TYPE_CHECKING:
@@ -140,20 +143,37 @@ class MemoryBackend(BackendProtocol):
         infos.sort(key=lambda x: x.get("path", ""))
         return infos
 
+    @override
     def read(
         self,
         file_path: str,
         offset: int = 0,
         limit: int = 2000,
-    ) -> str:
-        """Read file content with line numbers (path = one store record)."""
+    ) -> ReadResult:
+        """Read file content for the requested line range (path = one store record)."""
         record = self._get_record_by_path(file_path)
         if record is None:
-            return f"Error: File '{file_path}' not found"
+            return ReadResult(error=f"File '{file_path}' not found")
+
         file_data = create_file_data(record.content)
         file_data["created_at"] = record.created_at
         file_data["modified_at"] = record.modified_at
-        return format_read_response(file_data, offset, limit)
+
+        if _get_file_type(file_path) != "text":
+            return ReadResult(file_data=file_data)
+
+        sliced = slice_read_response(file_data, offset, limit)
+        if isinstance(sliced, ReadResult):
+            return sliced
+        sliced_fd = FileData(
+            content=sliced,
+            encoding=file_data.get("encoding", "utf-8"),
+        )
+        if "created_at" in file_data:
+            sliced_fd["created_at"] = file_data["created_at"]
+        if "modified_at" in file_data:
+            sliced_fd["modified_at"] = file_data["modified_at"]
+        return ReadResult(file_data=sliced_fd)
 
     def write(self, file_path: str, content: str) -> WriteResult:
         """Create a new "file" at path; error if path already exists."""
@@ -294,6 +314,68 @@ PATH_METADATA_KEY = "path"
 _MEMORY_LIST_LIMIT = 2000
 
 
+def _power_get_all_items(result: object) -> list[dict[str, Any]]:
+    """Normalize PowerMem get_all return value to a list of row dicts."""
+    rows: list[dict[str, Any]] = []
+    if isinstance(result, dict):
+        inner = cast("dict[str, Any]", result).get("results")
+        if isinstance(inner, list):
+            rows.extend(cast("dict[str, Any]", x) for x in inner if isinstance(x, dict))
+    elif isinstance(result, list):
+        rows.extend(cast("dict[str, Any]", x) for x in result if isinstance(x, dict))
+    return rows
+
+
+class _PowerMemMemoryLike(Protocol):
+    """Structural type for PowerMem (or compatible) Memory passed to PowerMemPathStore."""
+
+    def get_all(
+        self,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
+        limit: int = 2000,
+        offset: int = 0,
+    ) -> object:
+        """Return raw list or dict with results from the backing store."""
+        ...
+
+    def add(
+        self,
+        content: str,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+        run_id: object = None,
+        metadata: dict[str, str],
+        infer: bool = False,
+    ) -> dict[str, object] | None:
+        """Add a memory entry; returns wrapper dict or None."""
+        ...
+
+    def update(
+        self,
+        record_id: object,
+        content: str,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+    ) -> None:
+        """Update entry content by id."""
+        ...
+
+    def delete(
+        self,
+        record_id: object,
+        *,
+        user_id: object = None,
+        agent_id: object = None,
+    ) -> None:
+        """Delete entry by id."""
+        ...
+
+
 class PowerMemPathStore:
     """PathMemoryStore implementation using PowerMem Memory.
 
@@ -301,7 +383,7 @@ class PowerMemPathStore:
     instance (or compatible add/get/update/delete/get_all API).
     """
 
-    def __init__(self, memory: object) -> None:
+    def __init__(self, memory: _PowerMemMemoryLike) -> None:
         """Initialize with a PowerMem Memory instance.
 
         Args:
@@ -341,32 +423,32 @@ class PowerMemPathStore:
             limit=limit,
             offset=0,
         )
-        items = result.get("results", []) if isinstance(result, dict) else result if isinstance(result, list) else []
+        items = _power_get_all_items(result)
         norm_prefix = prefix.rstrip("/") + "/" if prefix != "/" else "/"
         records: list[PathMemoryRecord] = []
         for m in items:
-            meta = m.get("metadata") or {}
+            meta_raw = m.get("metadata")
+            meta: dict[str, Any] = meta_raw if isinstance(meta_raw, dict) else {}
             p = meta.get(PATH_METADATA_KEY)
             if not p or not isinstance(p, str) or not p.startswith("/"):
                 continue
             if prefix != "/" and not (p == prefix or p.startswith(norm_prefix)):
                 continue
-            content = m.get("memory") or m.get("content") or ""
-            if isinstance(content, list):
-                content = "\n".join(content)
-            created = m.get("created_at", "")
-            updated = m.get("updated_at", "")
-            if hasattr(created, "isoformat"):
-                created = created.isoformat()
-            if hasattr(updated, "isoformat"):
-                updated = updated.isoformat()
+            content_raw = m.get("memory") or m.get("content") or ""
+            content = "\n".join(str(line) for line in content_raw) if isinstance(content_raw, list) else str(content_raw)
+            created_raw = m.get("created_at", "")
+            if hasattr(created_raw, "isoformat"):
+                created_raw = created_raw.isoformat()
+            updated_raw = m.get("updated_at", "")
+            if hasattr(updated_raw, "isoformat"):
+                updated_raw = updated_raw.isoformat()
             records.append(
                 PathMemoryRecord(
                     id=m["id"],
                     path=p,
                     content=content,
-                    created_at=created,
-                    modified_at=updated,
+                    created_at=str(created_raw),
+                    modified_at=str(updated_raw),
                 )
             )
         return records
@@ -391,14 +473,22 @@ class PowerMemPathStore:
             metadata=metadata,
             infer=False,
         )
-        if not out or not out.get("results"):
-            msg = "PowerMem add returned no result"
-            raise RuntimeError(msg)
-        res = out["results"][0]
+        add_no_result = "PowerMem add returned no result"
+        if not out:
+            raise RuntimeError(add_no_result)
+        results_val = out.get("results")
+        if not isinstance(results_val, list) or not results_val:
+            raise RuntimeError(add_no_result)
+        res0 = results_val[0]
+        if not isinstance(res0, dict):
+            msg = "PowerMem add returned a non-dict result row"
+            raise TypeError(msg)
+        res = cast("dict[str, Any]", res0)
         mid = res.get("id")
-        created = res.get("created_at", "")
-        if hasattr(created, "isoformat"):
-            created = created.isoformat()
+        created_raw = res.get("created_at", "")
+        if hasattr(created_raw, "isoformat"):
+            created_raw = created_raw.isoformat()
+        created = str(created_raw)
         return PathMemoryRecord(
             id=mid,
             path=path,
